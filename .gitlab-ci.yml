@@ -1,0 +1,136 @@
+# ============================================================
+# GitLab CI/CD Pipeline
+# 階段：build → test → push → deploy
+# 觸發時機：push 到 main 分支
+# Container Registry：GitLab 內建 Container Registry
+# ============================================================
+
+variables:
+  # GitLab 內建變數 $CI_REGISTRY_IMAGE = registry.gitlab.com/<group>/<project>
+  IMAGE_NAME: $CI_REGISTRY_IMAGE
+  IMAGE_TAG: $CI_COMMIT_SHORT_SHA
+  IMAGE_FULL: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
+  IMAGE_LATEST: $CI_REGISTRY_IMAGE:latest
+  # Docker-in-Docker 設定
+  DOCKER_HOST: tcp://docker:2375
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: ""
+
+stages:
+  - build
+  - test
+  - push
+  - deploy
+
+# ─────────────────────────────────────────────────────────
+# Stage 1: build - 建構 Docker 映像
+# ─────────────────────────────────────────────────────────
+build-image:
+  stage: build
+  image: docker:24
+  services:
+    - docker:24-dind
+  before_script:
+    - docker info
+  script:
+    - echo "=== 建構 Docker 映像 ==="
+    - docker build -t $IMAGE_FULL -t $IMAGE_LATEST .
+    - echo "=== 檢視映像大小 ==="
+    - docker images $IMAGE_FULL
+    - echo "=== 匯出映像為 tar（傳給後續 stage 用）==="
+    - docker save $IMAGE_FULL -o image.tar
+  artifacts:
+    paths:
+      - image.tar
+    expire_in: 1 hour
+  only:
+    - main
+    - merge_requests
+
+# ─────────────────────────────────────────────────────────
+# Stage 2: test - 驗證 K8s YAML 與映像
+# ─────────────────────────────────────────────────────────
+lint-yaml:
+  stage: test
+  image: alpine/k8s:1.30.0
+  script:
+    - echo "=== kubectl dry-run 驗證 YAML 語法 ==="
+    - kubectl apply --dry-run=client -f deployment.yaml
+    - kubectl apply --dry-run=client -f service.yaml
+    - echo "=== 使用 kubeval 嚴格驗證 schema（選用）==="
+    # - kubeval deployment.yaml service.yaml
+  only:
+    - main
+    - merge_requests
+
+scan-image:
+  stage: test
+  image: docker:24
+  services:
+    - docker:24-dind
+  needs:
+    - build-image
+  script:
+    - docker load -i image.tar
+    - echo "=== 使用 Trivy 掃描映像漏洞（CRITICAL/HIGH 才失敗）==="
+    - apk add --no-cache curl
+    - curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+    - trivy image --severity CRITICAL,HIGH --exit-code 1 --ignore-unfixed $IMAGE_FULL
+  allow_failure: true
+  only:
+    - main
+    - merge_requests
+
+# ─────────────────────────────────────────────────────────
+# Stage 3: push - 推送映像到 GitLab Container Registry
+# ─────────────────────────────────────────────────────────
+push-image:
+  stage: push
+  image: docker:24
+  services:
+    - docker:24-dind
+  needs:
+    - build-image
+    - lint-yaml
+  before_script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin $CI_REGISTRY
+  script:
+    - docker load -i image.tar
+    - docker tag $IMAGE_FULL $IMAGE_LATEST
+    - echo "=== 推送 $IMAGE_FULL ==="
+    - docker push $IMAGE_FULL
+    - echo "=== 推送 $IMAGE_LATEST ==="
+    - docker push $IMAGE_LATEST
+  only:
+    - main
+
+# ─────────────────────────────────────────────────────────
+# Stage 4: deploy - 部署到 K8s 叢集
+# 前置條件：GitLab 已連接 K8s cluster（Operator 或 agent 模式）
+# 或在 CI/CD variables 中設定 KUBECONFIG
+# ─────────────────────────────────────────────────────────
+deploy-k8s:
+  stage: deploy
+  image: alpine/k8s:1.30.0
+  needs:
+    - push-image
+  environment:
+    name: production
+    url: http://k8s.example.com
+  before_script:
+    - echo "$KUBECONFIG_B64" | base64 -d > /tmp/kubeconfig
+    - export KUBECONFIG=/tmp/kubeconfig
+    - kubectl cluster-info
+  script:
+    - echo "=== 更新 Deployment 映像版本 ==="
+    - kubectl set image deployment/nginx-deployment nginx=$IMAGE_FULL --record
+    - echo "=== 套用 Service ==="
+    - kubectl apply -f service.yaml
+    - echo "=== 等待 Rollout 完成 ==="
+    - kubectl rollout status deployment/nginx-deployment --timeout=120s
+    - echo "=== 部署狀態 ==="
+    - kubectl get pods -l app=nginx
+    - kubectl get svc nginx-service
+  when: manual
+  only:
+    - main

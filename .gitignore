@@ -1,0 +1,41 @@
+# ============================================================
+# Git 忽略清單
+# ============================================================
+
+# 二進位執行檔（minikube/kubectl 等大型工具）
+bin/
+*.exe
+
+# 安裝程式
+*Installer.exe
+DockerDesktopInstaller.exe
+
+# 截圖與題目 PDF（屬於環境/題目，不應入版控）
+螢幕擷取畫面*.png
+*.pdf
+
+# Kubernetes 本地憑證
+.kube/
+kubeconfig
+*.kubeconfig
+
+# IDE / 編輯器
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS 系統檔
+.DS_Store
+Thumbs.db
+
+# 環境變數
+.env
+.env.local
+
+# Docker build 暫存
+image.tar
+*.tar
+
+# Logs
+*.log

@@ -1,41 +1,53 @@
 # ============================================================
 # Git 忽略清單
+# 原則：(1) 二進位 (2) 敏感資料 (3) 個人/環境檔 都不該進版控
 # ============================================================
 
-# 二進位執行檔（minikube/kubectl 等大型工具）
+# ─── 二進位執行檔 ───────────────────────────────────────────
+# 為什麼排除：minikube.exe / kubectl.exe 單檔 50MB+，git 不適合存大型
+# 二進位；而且作業系統不通用（Windows 的 .exe 在 Mac/Linux 無法執行）。
+# 正確做法：在 README 寫下載連結，或用 package manager（scoop/brew）安裝。
 bin/
 *.exe
 
-# 安裝程式
+# 安裝程式（同上，更不該進版控）
 *Installer.exe
 DockerDesktopInstaller.exe
 
-# 截圖與題目 PDF（屬於環境/題目，不應入版控）
+# ─── 個人/環境檔 ───────────────────────────────────────────
+# 截圖屬於個人 demo 紀錄、PDF 是題目原始檔，跟程式碼無關，不入版控。
 螢幕擷取畫面*.png
 *.pdf
 
-# Kubernetes 本地憑證
+# ─── 敏感資料（最重要！）────────────────────────────────────
+# Kubernetes 設定檔含「叢集 API server URL + client 憑證」，
+# 一旦外洩等於把叢集 admin 權限交出去。
+# 正式專案應把 kubeconfig 放 Vault / GitLab CI/CD Variables，絕不入 git。
 .kube/
 kubeconfig
 *.kubeconfig
 
-# IDE / 編輯器
+# 環境變數常含密碼、API key、token，永遠不該進版控。
+# 應提供 .env.example（無敏感值）作範本，由開發者自行複製成 .env。
+.env
+.env.local
+
+# ─── IDE / 編輯器個人設定 ────────────────────────────────────
+# 每個人 IDE 設定不同，不該強加於他人；且可能含本機絕對路徑。
 .vscode/
 .idea/
 *.swp
 *~
 
-# OS 系統檔
+# ─── OS 自動產生的檔 ───────────────────────────────────────
+# macOS Finder / Windows Explorer 在資料夾留下的隱藏 metadata 檔。
 .DS_Store
 Thumbs.db
 
-# 環境變數
-.env
-.env.local
-
-# Docker build 暫存
+# ─── Build / Runtime 暫存 ─────────────────────────────────
+# docker save 產出的映像 tar 檔（CI pipeline artifact，本機不該保留）
 image.tar
 *.tar
 
-# Logs
+# 應用程式 log 檔，動態產生、容易過大、含敏感資訊
 *.log

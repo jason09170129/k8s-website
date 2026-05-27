@@ -251,6 +251,56 @@ spec:
 
 ---
 
+## 五-2、hpa.yaml 解析（自動擴縮）
+
+```yaml
+apiVersion: autoscaling/v2          # v2 為 stable，支援多指標
+kind: HorizontalPodAutoscaler
+metadata:
+  name: nginx-hpa
+spec:
+  scaleTargetRef:                   # 鎖定要擴縮的對象
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nginx-deployment
+  minReplicas: 2                    # 下限：永遠至少 2 個 Pod
+  maxReplicas: 10                   # 上限：避免吃光資源
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 50      # 目標 CPU 50%（相對 requests）
+  behavior:                         # 擴縮速度調校（避免抖動）
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies: [{ type: Percent, value: 100, periodSeconds: 60 }]
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies: [{ type: Percent, value: 50, periodSeconds: 60 }]
+```
+
+**關鍵概念：**
+- HPA 透過 **metrics-server** 取得 Pod 的 CPU/記憶體用量（Minikube 需 `minikube addons enable metrics-server`）
+- CPU `Utilization` 是相對 `resources.requests.cpu` 的百分比，**沒設 requests 的 Pod，HPA 算出來的值是錯的**
+- `behavior` 段控制擴縮反應速度：
+  - 擴展積極（30s 觀察 + 每分鐘最多翻倍）→ 突發流量時快速應對
+  - 收縮保守（5min 觀察 + 每分鐘最多砍半）→ 避免抖動把剛起來的 Pod 又收掉
+
+**壓測示範：**
+```bash
+# 製造 CPU 壓力
+kubectl run -it --rm load-gen --image=busybox --restart=Never -- \
+  /bin/sh -c "while true; do wget -q -O- http://nginx-service; done"
+
+# 另一視窗持續觀察
+kubectl get hpa nginx-hpa --watch
+# 預期看到 REPLICAS 從 3 → 6 → 10
+```
+
+---
+
 ## 六、作業完整執行流程
 
 ```bash

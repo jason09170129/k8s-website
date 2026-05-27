@@ -44,6 +44,10 @@ if ($LASTEXITCODE -ne 0) { Write-Host "Minikube 啟動失敗！" -ForegroundColo
 Write-Host "`n=== Minikube 狀態 ===" -ForegroundColor Cyan
 & "$BinDir\minikube.exe" status
 
+# 啟用 metrics-server addon（HPA 需要）
+Write-Host "`n=== 啟用 metrics-server addon (HPA 需要) ===" -ForegroundColor Cyan
+& "$BinDir\minikube.exe" addons enable metrics-server
+
 # 建構自訂 Docker 映像（直接 build 進 Minikube 內的 containerd image store）
 Write-Host "`n=== 建構自訂 Nginx 映像 ($ImageFull) ===" -ForegroundColor Cyan
 Push-Location $YamlDir
@@ -68,6 +72,9 @@ Write-Host "`n=== 套用 Deployment ===" -ForegroundColor Cyan
 Write-Host "`n=== 套用 Service ===" -ForegroundColor Cyan
 & "$BinDir\kubectl.exe" apply -f "$YamlDir\service.yaml"
 
+Write-Host "`n=== 套用 HPA ===" -ForegroundColor Cyan
+& "$BinDir\kubectl.exe" apply -f "$YamlDir\hpa.yaml"
+
 # 強制重新部署，讓新映像生效（同 tag 重 build 時必要）
 Write-Host "`n=== 觸發 Rollout（套用最新映像）===" -ForegroundColor Cyan
 & "$BinDir\kubectl.exe" rollout restart deployment/nginx-deployment
@@ -82,6 +89,8 @@ Write-Host "--- Pods ---"
 & "$BinDir\kubectl.exe" get pods -o wide
 Write-Host "--- Services ---"
 & "$BinDir\kubectl.exe" get services
+Write-Host "--- HPA ---"
+& "$BinDir\kubectl.exe" get hpa
 
 # 取得對外網址
 # 注意：Windows + docker driver 下 minikube service 需保持終端開著才能 tunnel

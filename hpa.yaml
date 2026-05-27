@@ -1,0 +1,41 @@
+# ============================================================
+# HorizontalPodAutoscaler - 根據 CPU 使用率自動調整 Pod 數量
+# 需求：Minikube 必須啟用 metrics-server addon 才能拿到 CPU 指標
+#       minikube addons enable metrics-server
+# 觀察指令：kubectl get hpa nginx-hpa --watch
+# ============================================================
+apiVersion: autoscaling/v2          # v2 為 stable 版本（K8s 1.23+），支援多指標
+kind: HorizontalPodAutoscaler
+metadata:
+  name: nginx-hpa
+  namespace: default
+  labels:
+    app: nginx
+spec:
+  scaleTargetRef:                   # 鎖定要自動擴縮的對象
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nginx-deployment
+  minReplicas: 2                    # 下限：永遠至少 2 個 Pod（避免縮到 0 失去服務）
+  maxReplicas: 10                   # 上限：避免突發流量把節點資源吃光
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 50      # 目標：平均 CPU 使用率維持在 requests 的 50%
+                                    # 高於 50% → 擴展；低於 50% → 收縮
+  behavior:                         # 擴縮行為調校（K8s 1.18+）
+    scaleUp:
+      stabilizationWindowSeconds: 30   # 擴展前先穩定觀察 30 秒，避免過度反應
+      policies:
+      - type: Percent
+        value: 100                  # 每次最多翻倍擴展（例如 2 → 4 → 8）
+        periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300  # 收縮前穩定觀察 5 分鐘，避免抖動
+      policies:
+      - type: Percent
+        value: 50                   # 每次最多砍一半（保守，避免過快縮容導致流量打爆）
+        periodSeconds: 60

@@ -15,6 +15,69 @@
 | **Orchestration** | Kubernetes（Minikube 本機叢集） |
 | **Web Server** | Nginx 1.27 (Alpine) |
 | **Scripting** | PowerShell（本機部署自動化） |
+| **Autoscaling** | HorizontalPodAutoscaler（CPU 觸發，2–10 replicas） |
+
+---
+
+## 系統架構
+
+```mermaid
+flowchart TB
+    User([使用者瀏覽器]):::user
+
+    subgraph Dev["開發者本機環境"]
+        direction TB
+        Code["原始碼<br/>html/, *.yaml, Dockerfile"]
+        Git[("Git Repo<br/>本地版控")]
+        Img["Docker Image<br/>syswatch-nginx:1.0.0"]
+        Code -->|git commit| Git
+        Code -->|docker build| Img
+        Git -.->|git push 選用<br/>未實際推送| GL[("GitLab Remote")]
+    end
+
+    subgraph CI["GitLab CI/CD Pipeline (設計用)"]
+        direction LR
+        B[build] --> T[test<br/>+Trivy 掃 CVE] --> P[push] --> D[deploy<br/>manual]
+    end
+
+    subgraph K8s["Kubernetes 叢集 (Minikube)"]
+        direction TB
+
+        subgraph Ctrl["Control Plane"]
+            HPA["HPA<br/>min:2 max:10<br/>CPU 50%"]:::hpa
+            Deploy["Deployment<br/>replicas: 3"]
+            Svc["Service<br/>NodePort 30080"]
+        end
+
+        subgraph Node["Node (Docker Container)"]
+            direction TB
+            Kubelet[kubelet]
+            CD["Containerd<br/>(K8s 1.24+ runtime)"]:::runtime
+            Pod1[Pod 1<br/>nginx]
+            Pod2[Pod 2<br/>nginx]
+            Pod3[Pod 3<br/>nginx]
+            Kubelet -->|CRI| CD
+            CD -->|runc| Pod1
+            CD -->|runc| Pod2
+            CD -->|runc| Pod3
+        end
+
+        HPA -.監控指標<br/>調整 replicas.-> Deploy
+        Deploy -.管理.-> Pod1 & Pod2 & Pod3
+        Svc -->|round-robin<br/>導流| Pod1 & Pod2 & Pod3
+    end
+
+    Img -->|minikube image build| CD
+    GL -.觸發.-> CI
+    CI -.kubectl set image.-> Deploy
+    User -->|HTTP :30080| Svc
+
+    classDef user fill:#fef3c7,stroke:#f59e0b
+    classDef hpa fill:#fce7f3,stroke:#ec4899
+    classDef runtime fill:#dbeafe,stroke:#3b82f6
+```
+
+> 圖中虛線表示「設計但本次 demo 未實際執行」的路徑（GitLab push / CI pipeline）。
 
 ---
 
@@ -28,8 +91,9 @@
 ├── .gitlab-ci.yml           # GitLab CI/CD pipeline 定義
 ├── html/
 │   └── index.html           # 靜態網頁內容（會被 COPY 進映像）
-├── deployment.yaml          # K8s Deployment（Pod 規格 + 探針 + 資源限制）
+├── deployment.yaml          # K8s Deployment（replicas:3 + 探針 + 資源限制）
 ├── service.yaml             # K8s Service（NodePort 30080 對外）
+├── hpa.yaml                 # HorizontalPodAutoscaler（CPU 50% 觸發擴縮）
 ├── deploy.ps1               # 本機一鍵部署腳本
 ├── setup-admin.ps1          # 首次環境安裝腳本（需系統管理員）
 ├── README.md                # 本檔
@@ -97,6 +161,8 @@ GitLab Pipeline:
 | Image tag 用 commit SHA 不用 :latest | 不可變基礎設施，每個 commit 對應唯一映像 |
 | Deploy stage 設為 manual | 正式環境部署需人為審核作為最後防線 |
 | 加 livenessProbe / readinessProbe | 啟用 K8s 自我修復 + 流量管控機制 |
+| Deployment 設 replicas: 3 | 消除單點失敗，單 Pod 掛掉時其他 Pod 接流量 |
+| 加 HPA（CPU 50% 觸發擴縮）| 突發流量自動擴展、空閒時節省資源 |
 
 ---
 

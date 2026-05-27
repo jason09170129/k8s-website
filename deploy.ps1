@@ -1,4 +1,4 @@
-# ============================================================
+﻿# ============================================================
 # K8s 部署腳本（含 Docker 映像建構）
 # 流程：檢查 Docker → 啟動 Minikube → build 映像 → apply YAML → 開啟瀏覽器
 # ============================================================
@@ -83,12 +83,20 @@ Write-Host "--- Pods ---"
 Write-Host "--- Services ---"
 & "$BinDir\kubectl.exe" get services
 
-# 開啟瀏覽器
-Write-Host "`n=== 開啟瀏覽器 ===" -ForegroundColor Cyan
-$url = & "$BinDir\minikube.exe" service nginx-service --url
-Write-Host "服務網址: $url" -ForegroundColor Yellow
-Start-Process $url
+# 取得對外網址
+# 注意：Windows + docker driver 下 minikube service 需保持終端開著才能 tunnel
+# 故另開 PowerShell 視窗執行 tunnel，本腳本不阻塞
+Write-Host "`n=== 啟動 Service Tunnel（另開視窗）===" -ForegroundColor Cyan
+$nodePort = & "$BinDir\kubectl.exe" get svc nginx-service -o jsonpath="{.spec.ports[0].nodePort}"
+$mkIp = & "$BinDir\minikube.exe" ip
+Write-Host "NodePort   : $nodePort" -ForegroundColor Yellow
+Write-Host "Minikube IP: $mkIp" -ForegroundColor Yellow
+
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "& '$BinDir\minikube.exe' service nginx-service"
+Start-Sleep -Seconds 3
 
 Write-Host "`n========================================" -ForegroundColor Green
-Write-Host "部署完成！請截圖瀏覽器畫面（包含網址列）" -ForegroundColor Green
+Write-Host "部署完成！" -ForegroundColor Green
+Write-Host "新視窗會開啟 Service Tunnel，瀏覽器自動跳出網頁" -ForegroundColor Green
+Write-Host "（關閉新視窗會中斷 tunnel）" -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Green
